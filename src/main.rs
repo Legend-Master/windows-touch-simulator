@@ -204,7 +204,7 @@ fn make_touch_info(point: &POINT, flags: POINTER_FLAGS) -> POINTER_TOUCH_INFO {
 }
 
 fn is_key_down(key: VIRTUAL_KEY) -> bool {
-    unsafe { GetAsyncKeyState(key.0.into()) & 1 != 0 }
+    unsafe { GetAsyncKeyState(key.0.into()) & 0x8000u16 as i16 != 0 }
 }
 
 #[allow(non_snake_case)]
