@@ -7,7 +7,7 @@ use windows::{
         UI::{
             HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
             Input::{
-                KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_RSHIFT, VK_SHIFT},
+                KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_RSHIFT},
                 Pointer::{
                     InitializeTouchInjection, InjectTouchInput, POINTER_FLAGS, POINTER_FLAG_DOWN,
                     POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE, POINTER_FLAG_UP,
@@ -72,14 +72,14 @@ unsafe extern "system" fn low_level_mouse_proc(
     }
     match wparam.0 as u32 {
         WM_LBUTTONDOWN => {
-            if !AUTO_ZOOMING {
+            if !AUTO_ZOOMING && is_key_down(VK_RSHIFT) {
                 println!("sending touch down");
                 let touch_info = make_touch_info(
                     &info.pt,
                     POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
                 );
                 let mut touch_infos = vec![touch_info];
-                if is_key_down(VK_SHIFT) {
+                if is_key_down(VK_CONTROL) {
                     let mut second_contact = touch_info.clone();
                     second_contact.pointerInfo.pointerId = 1;
                     touch_infos.push(second_contact);
