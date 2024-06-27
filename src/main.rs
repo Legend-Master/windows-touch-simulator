@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::{sync::Mutex, thread::sleep, time::Duration};
 use windows::{
     core::w,
@@ -74,7 +76,7 @@ unsafe extern "system" fn low_level_mouse_proc(
         WM_LBUTTONDOWN => {
             if !AUTO_ZOOMING && is_key_down(VK_RSHIFT) {
                 println!("sending touch down");
-                let touch_info = make_touch_info(
+                let touch_info = create_touch_info(
                     &info.pt,
                     POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
                 );
@@ -119,7 +121,7 @@ unsafe extern "system" fn low_level_mouse_proc(
         WM_MOUSEWHEEL => {
             if !AUTO_ZOOMING && is_key_down(VK_RSHIFT) {
                 let zoom_out = HIWORD(info.mouseData) < 0;
-                let mut first_contact = make_touch_info(
+                let mut first_contact = create_touch_info(
                     &info.pt,
                     POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
                 );
@@ -182,7 +184,7 @@ unsafe extern "system" fn low_level_mouse_proc(
     CallNextHookEx(HHOOK::default(), code, wparam, lparam)
 }
 
-fn make_touch_info(point: &POINT, flags: POINTER_FLAGS) -> POINTER_TOUCH_INFO {
+fn create_touch_info(point: &POINT, flags: POINTER_FLAGS) -> POINTER_TOUCH_INFO {
     POINTER_TOUCH_INFO {
         pointerInfo: POINTER_INFO {
             pointerType: PT_TOUCH,
