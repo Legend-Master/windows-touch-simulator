@@ -2,10 +2,13 @@
 
 use std::{sync::Mutex, thread::sleep, time::Duration};
 use windows::{
-    core::w,
+    core::{w, Owned},
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
-        System::LibraryLoader::GetModuleHandleW,
+        Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_TIMEOUT, WPARAM},
+        System::{
+            LibraryLoader::GetModuleHandleW,
+            Threading::{CreateEventW, SetEvent, WaitForSingleObject, INFINITE},
+        },
         UI::{
             HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
             Input::{
@@ -34,6 +37,7 @@ macro_rules! log_error {
 }
 
 static mut CURRENT_TOUCH_INFOS: Mutex<Vec<POINTER_TOUCH_INFO>> = Mutex::new(Vec::new());
+static mut KEEP_ALIVE_EVENT: Option<Owned<HANDLE>> = None;
 static mut AUTO_ZOOMING: bool = false;
 
 fn main() {
@@ -43,11 +47,19 @@ fn main() {
 
     unsafe { InitializeTouchInjection(2, TOUCH_FEEDBACK_DEFAULT).unwrap() }
 
+    unsafe {
+        KEEP_ALIVE_EVENT.replace(Owned::new(CreateEventW(None, false, false, None).unwrap()))
+    };
     // keep touch contacts alive
-    std::thread::spawn(|| loop {
-        sleep(Duration::from_millis(100));
-        let touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
-        if !touch_infos.is_empty() {
+    std::thread::spawn(move || loop {
+        unsafe { WaitForSingleObject(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0), INFINITE) };
+        while unsafe { WaitForSingleObject(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0), 100) }
+            == WAIT_TIMEOUT
+        {
+            let touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
+            if touch_infos.is_empty() {
+                break;
+            }
             unsafe { log_error!(InjectTouchInput(&touch_infos)) };
         }
     });
@@ -93,6 +105,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                             POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
                     }
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
+                    SetEvent(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0)).unwrap();
                 } else {
                     println!("{result:?}");
                 }
@@ -115,6 +128,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                 }
                 log_error!(InjectTouchInput(&touch_infos));
                 touch_infos.clear();
+                SetEvent(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0)).unwrap();
                 return LRESULT(1);
             }
         }
