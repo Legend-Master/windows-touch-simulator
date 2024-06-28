@@ -1,6 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{sync::Mutex, thread::sleep, time::Duration};
+use std::{
+    sync::{
+        mpsc::{channel, Sender},
+        Mutex,
+    },
+    thread::sleep,
+    time::Duration,
+};
 use windows::{
     core::w,
     Win32::{
@@ -34,6 +41,8 @@ macro_rules! log_error {
 }
 
 static mut CURRENT_TOUCH_INFOS: Mutex<Vec<POINTER_TOUCH_INFO>> = Mutex::new(Vec::new());
+static mut START_TOUCH_EVENT: Option<Sender<()>> = None;
+static mut START_AUTO_ZOOMING_EVENT: Option<Sender<(bool, Vec<POINTER_TOUCH_INFO>)>> = None;
 static mut AUTO_ZOOMING: bool = false;
 
 fn main() {
@@ -43,13 +52,52 @@ fn main() {
 
     unsafe { InitializeTouchInjection(2, TOUCH_FEEDBACK_DEFAULT).unwrap() }
 
+    let (sender, receiver) = channel();
+    unsafe { START_TOUCH_EVENT.replace(sender) };
     // keep touch contacts alive
-    std::thread::spawn(|| loop {
-        sleep(Duration::from_millis(100));
-        let touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
-        if !touch_infos.is_empty() {
+    std::thread::spawn(move || loop {
+        receiver.recv().unwrap();
+        while receiver.recv_timeout(Duration::from_millis(100)).is_err() {
+            let touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
+            if touch_infos.is_empty() {
+                break;
+            }
             unsafe { log_error!(InjectTouchInput(&touch_infos)) };
         }
+    });
+    let (sender, receiver) = channel();
+    unsafe { START_AUTO_ZOOMING_EVENT.replace(sender) };
+    std::thread::spawn(move || loop {
+        let (zoom_out, mut touch_infos) = receiver.recv().unwrap();
+        for _ in 0..25 {
+            sleep(Duration::from_millis(1));
+            let first_contact = touch_infos.first_mut().unwrap();
+            if zoom_out {
+                first_contact.pointerInfo.ptPixelLocation.x += 3;
+                first_contact.pointerInfo.ptPixelLocation.y += 3;
+            } else {
+                first_contact.pointerInfo.ptPixelLocation.x -= 3;
+                first_contact.pointerInfo.ptPixelLocation.y -= 3;
+            }
+            let second_contact = touch_infos.last_mut().unwrap();
+            if zoom_out {
+                second_contact.pointerInfo.ptPixelLocation.x -= 3;
+                second_contact.pointerInfo.ptPixelLocation.y -= 3;
+            } else {
+                second_contact.pointerInfo.ptPixelLocation.x += 3;
+                second_contact.pointerInfo.ptPixelLocation.y += 3;
+            }
+            if let Err(error) = unsafe { InjectTouchInput(&touch_infos) } {
+                println!("Error while performing auto zoom: {error}");
+                break;
+            }
+        }
+        sleep(Duration::from_millis(5));
+        for touch_info in touch_infos.iter_mut() {
+            touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
+        }
+        unsafe { log_error!(InjectTouchInput(&touch_infos)) };
+        unsafe { AUTO_ZOOMING = false };
     });
 
     let message: *mut MSG = std::ptr::null_mut();
@@ -93,6 +141,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                             POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
                     }
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
+                    START_TOUCH_EVENT.as_ref().unwrap().send(()).unwrap();
                 } else {
                     println!("{result:?}");
                 }
@@ -115,6 +164,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                 }
                 log_error!(InjectTouchInput(&touch_infos));
                 touch_infos.clear();
+                START_TOUCH_EVENT.as_ref().unwrap().send(()).unwrap();
                 return LRESULT(1);
             }
         }
@@ -141,37 +191,11 @@ unsafe extern "system" fn low_level_mouse_proc(
                             POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
                     }
                     AUTO_ZOOMING = true;
-                    std::thread::spawn(move || {
-                        for _ in 0..25 {
-                            sleep(Duration::from_millis(1));
-                            let first_contact = touch_infos.first_mut().unwrap();
-                            if zoom_out {
-                                first_contact.pointerInfo.ptPixelLocation.x += 3;
-                                first_contact.pointerInfo.ptPixelLocation.y += 3;
-                            } else {
-                                first_contact.pointerInfo.ptPixelLocation.x -= 3;
-                                first_contact.pointerInfo.ptPixelLocation.y -= 3;
-                            }
-                            let second_contact = touch_infos.last_mut().unwrap();
-                            if zoom_out {
-                                second_contact.pointerInfo.ptPixelLocation.x -= 3;
-                                second_contact.pointerInfo.ptPixelLocation.y -= 3;
-                            } else {
-                                second_contact.pointerInfo.ptPixelLocation.x += 3;
-                                second_contact.pointerInfo.ptPixelLocation.y += 3;
-                            }
-                            if let Err(error) = InjectTouchInput(&touch_infos) {
-                                println!("Error while performing auto zoom: {error}");
-                                break;
-                            }
-                        }
-                        sleep(Duration::from_millis(5));
-                        for touch_info in touch_infos.iter_mut() {
-                            touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
-                        }
-                        log_error!(InjectTouchInput(&touch_infos));
-                        AUTO_ZOOMING = false
-                    });
+                    START_AUTO_ZOOMING_EVENT
+                        .as_ref()
+                        .unwrap()
+                        .send((zoom_out, touch_infos))
+                        .unwrap();
                     return LRESULT(1);
                 } else {
                     println!("{result:?}");
