@@ -6,13 +6,16 @@ Simulating touch with a mouse on Windows
 
 Run it, and then you can use
 
-- right shift + left mouse button to simulate touch
-- right shift + ctrl + left mouse button to simulate a contact at the mouse's position and another contact following cursor
-- right shift + mouse wheel to simulate pinch zoom
+- <kbd>right shift</kbd> + left mouse button to simulate touch
+- <kbd>right shift</kbd> + <kbd>ctrl</kbd> + left mouse button to simulate a contact at the mouse's position and another contact following cursor
+- <kbd>right shift</kbd> + mouse wheel to simulate pinch zoom
 
 https://github.com/Legend-Master/windows-touch-simulator/assets/68118705/88f57852-31ad-4feb-98f3-389ddaedc3e5
 
-Note: requires Windows 10 +
+Notes:
+
+- Requires Windows 10 +
+- If you want it to work on elevated apps like task manager, run it as admin
 
 ## TODO
 
