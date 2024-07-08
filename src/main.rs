@@ -32,9 +32,14 @@ use windows::{
 };
 
 macro_rules! log_error {
-    ($expression:expr) => {
+    ($expression: expr) => {
         if let Err(error) = $expression {
             println!("{error}");
+        }
+    };
+    ($expression: expr, $context: literal) => {
+        if let Err(error) = $expression {
+            println!("Error while {}: {}", $context, error);
         }
     };
 }
@@ -71,7 +76,12 @@ fn main() {
             if touch_infos.is_empty() {
                 break;
             }
-            unsafe { log_error!(InjectTouchInput(&touch_infos)) };
+            unsafe {
+                log_error!(
+                    InjectTouchInput(&touch_infos),
+                    "sending touch move to keep the touch alive"
+                )
+            };
         }
     });
 
@@ -115,7 +125,12 @@ fn main() {
         for touch_info in touch_infos.iter_mut() {
             touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
         }
-        unsafe { log_error!(InjectTouchInput(&touch_infos)) };
+        unsafe {
+            log_error!(
+                InjectTouchInput(&touch_infos),
+                "sending touch end in auto zooming"
+            )
+        };
         touch_infos.clear();
         unsafe { AUTO_ZOOMING.take() };
     });
@@ -163,7 +178,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
                     SetEvent(*KEEP_ALIVE_EVENT.as_deref().unwrap()).unwrap();
                 } else {
-                    println!("{result:?}");
+                    println!("Error while sending touch down: {result:?}");
                 }
                 return LRESULT(1);
             }
@@ -172,7 +187,7 @@ unsafe extern "system" fn low_level_mouse_proc(
             let mut touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
             if let Some(touch_info) = touch_infos.last_mut() {
                 touch_info.pointerInfo.ptPixelLocation = info.pt;
-                log_error!(InjectTouchInput(&touch_infos));
+                log_error!(InjectTouchInput(&touch_infos), "sending touch move");
             }
         }
         WM_LBUTTONUP => {
@@ -182,7 +197,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                 for touch_info in touch_infos.iter_mut() {
                     touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
                 }
-                log_error!(InjectTouchInput(&touch_infos));
+                log_error!(InjectTouchInput(&touch_infos), "sending touch end");
                 touch_infos.clear();
                 SetEvent(*KEEP_ALIVE_EVENT.as_deref().unwrap()).unwrap();
                 return LRESULT(1);
@@ -215,7 +230,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                     SetEvent(*AUTO_ZOOMING_EVENT.as_deref().unwrap()).unwrap();
                     return LRESULT(1);
                 } else {
-                    println!("{result:?}");
+                    println!("Error while sending touch down to start auto zooming: {result:?}");
                 }
             }
         }
