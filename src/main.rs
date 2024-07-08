@@ -4,10 +4,13 @@ use std::{sync::Mutex, thread::sleep, time::Duration};
 use windows::{
     core::{w, Owned},
     Win32::{
-        Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_TIMEOUT, WPARAM},
+        Foundation::{
+            GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_TIMEOUT,
+            WPARAM,
+        },
         System::{
             LibraryLoader::GetModuleHandleW,
-            Threading::{CreateEventW, SetEvent, WaitForSingleObject, INFINITE},
+            Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE},
         },
         UI::{
             HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
@@ -42,6 +45,13 @@ static mut AUTO_ZOOMING_EVENT: Option<Owned<HANDLE>> = None;
 static mut AUTO_ZOOMING: Option<bool> = None;
 
 fn main() {
+    let _mutex_handle = unsafe {
+        Owned::new(CreateMutexW(None, true, w!(r"Global\WindowsTouchSimulator")).unwrap())
+    };
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        panic!("An instance of Windows Touch Simulator is already running");
+    }
+
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).unwrap() };
     let hmod = unsafe { GetModuleHandleW(w!("kernel32.dll")).unwrap() };
     unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), hmod, 0).unwrap() };
