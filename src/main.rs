@@ -151,7 +151,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                             POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
                     }
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
-                    SetEvent(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0)).unwrap();
+                    SetEvent(*KEEP_ALIVE_EVENT.as_deref().unwrap()).unwrap();
                 } else {
                     println!("{result:?}");
                 }
@@ -174,7 +174,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                 }
                 log_error!(InjectTouchInput(&touch_infos));
                 touch_infos.clear();
-                SetEvent(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0)).unwrap();
+                SetEvent(*KEEP_ALIVE_EVENT.as_deref().unwrap()).unwrap();
                 return LRESULT(1);
             }
         }
@@ -202,7 +202,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                     }
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
                     AUTO_ZOOMING.replace(zoom_out);
-                    SetEvent(HANDLE(AUTO_ZOOMING_EVENT.as_ref().unwrap().0)).unwrap();
+                    SetEvent(*AUTO_ZOOMING_EVENT.as_deref().unwrap()).unwrap();
                     return LRESULT(1);
                 } else {
                     println!("{result:?}");
