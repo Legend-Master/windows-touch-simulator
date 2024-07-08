@@ -63,8 +63,8 @@ fn main() {
         KEEP_ALIVE_EVENT.replace(Owned::new(CreateEventW(None, false, false, None).unwrap()))
     };
     std::thread::spawn(move || loop {
-        unsafe { WaitForSingleObject(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0), INFINITE) };
-        while unsafe { WaitForSingleObject(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0), 100) }
+        unsafe { WaitForSingleObject(*KEEP_ALIVE_EVENT.as_deref().unwrap(), INFINITE) };
+        while unsafe { WaitForSingleObject(*KEEP_ALIVE_EVENT.as_deref().unwrap(), 100) }
             == WAIT_TIMEOUT
         {
             let touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
@@ -80,7 +80,7 @@ fn main() {
         AUTO_ZOOMING_EVENT.replace(Owned::new(CreateEventW(None, false, false, None).unwrap()))
     };
     std::thread::spawn(move || loop {
-        unsafe { WaitForSingleObject(HANDLE(AUTO_ZOOMING_EVENT.as_ref().unwrap().0), INFINITE) };
+        unsafe { WaitForSingleObject(*AUTO_ZOOMING_EVENT.as_deref().unwrap(), INFINITE) };
         let Some(zoom_out) = (unsafe { AUTO_ZOOMING }) else {
             continue;
         };
