@@ -38,7 +38,8 @@ macro_rules! log_error {
 
 static mut CURRENT_TOUCH_INFOS: Mutex<Vec<POINTER_TOUCH_INFO>> = Mutex::new(Vec::new());
 static mut KEEP_ALIVE_EVENT: Option<Owned<HANDLE>> = None;
-static mut AUTO_ZOOMING: bool = false;
+static mut AUTO_ZOOMING_EVENT: Option<Owned<HANDLE>> = None;
+static mut AUTO_ZOOMING: Option<bool> = None;
 
 fn main() {
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).unwrap() };
@@ -47,10 +48,10 @@ fn main() {
 
     unsafe { InitializeTouchInjection(2, TOUCH_FEEDBACK_DEFAULT).unwrap() }
 
+    // Keep touch contacts alive
     unsafe {
         KEEP_ALIVE_EVENT.replace(Owned::new(CreateEventW(None, false, false, None).unwrap()))
     };
-    // keep touch contacts alive
     std::thread::spawn(move || loop {
         unsafe { WaitForSingleObject(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0), INFINITE) };
         while unsafe { WaitForSingleObject(HANDLE(KEEP_ALIVE_EVENT.as_ref().unwrap().0), 100) }
@@ -64,6 +65,51 @@ fn main() {
         }
     });
 
+    // Perform auto zooming on event
+    unsafe {
+        AUTO_ZOOMING_EVENT.replace(Owned::new(CreateEventW(None, false, false, None).unwrap()))
+    };
+    std::thread::spawn(move || loop {
+        unsafe { WaitForSingleObject(HANDLE(AUTO_ZOOMING_EVENT.as_ref().unwrap().0), INFINITE) };
+        let Some(zoom_out) = (unsafe { AUTO_ZOOMING }) else {
+            continue;
+        };
+        let mut touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
+        if touch_infos.is_empty() {
+            continue;
+        }
+        for _ in 0..25 {
+            sleep(Duration::from_millis(1));
+            let first_contact = touch_infos.first_mut().unwrap();
+            if zoom_out {
+                first_contact.pointerInfo.ptPixelLocation.x += 3;
+                first_contact.pointerInfo.ptPixelLocation.y += 3;
+            } else {
+                first_contact.pointerInfo.ptPixelLocation.x -= 3;
+                first_contact.pointerInfo.ptPixelLocation.y -= 3;
+            }
+            let second_contact = touch_infos.last_mut().unwrap();
+            if zoom_out {
+                second_contact.pointerInfo.ptPixelLocation.x -= 3;
+                second_contact.pointerInfo.ptPixelLocation.y -= 3;
+            } else {
+                second_contact.pointerInfo.ptPixelLocation.x += 3;
+                second_contact.pointerInfo.ptPixelLocation.y += 3;
+            }
+            if let Err(error) = unsafe { InjectTouchInput(&touch_infos) } {
+                println!("Error while performing auto zoom: {error}");
+                break;
+            }
+        }
+        sleep(Duration::from_millis(5));
+        for touch_info in touch_infos.iter_mut() {
+            touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
+        }
+        unsafe { log_error!(InjectTouchInput(&touch_infos)) };
+        touch_infos.clear();
+        unsafe { AUTO_ZOOMING.take() };
+    });
+
     let message: *mut MSG = std::ptr::null_mut();
     while unsafe { GetMessageW(message, HWND::default(), 0, 0).into() } {}
 }
@@ -73,7 +119,7 @@ unsafe extern "system" fn low_level_mouse_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if code < 0 {
+    if code < 0 || AUTO_ZOOMING.is_some() {
         return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
     }
 
@@ -86,7 +132,7 @@ unsafe extern "system" fn low_level_mouse_proc(
     }
     match wparam.0 as u32 {
         WM_LBUTTONDOWN => {
-            if !AUTO_ZOOMING && is_key_down(VK_RSHIFT) {
+            if is_key_down(VK_RSHIFT) {
                 println!("sending touch down");
                 let touch_info = create_touch_info(
                     &info.pt,
@@ -133,7 +179,7 @@ unsafe extern "system" fn low_level_mouse_proc(
             }
         }
         WM_MOUSEWHEEL => {
-            if !AUTO_ZOOMING && is_key_down(VK_RSHIFT) {
+            if is_key_down(VK_RSHIFT) && { CURRENT_TOUCH_INFOS.lock().unwrap().is_empty() } {
                 let zoom_out = HIWORD(info.mouseData) < 0;
                 let mut first_contact = create_touch_info(
                     &info.pt,
@@ -154,38 +200,9 @@ unsafe extern "system" fn low_level_mouse_proc(
                         touch_info.pointerInfo.pointerFlags =
                             POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
                     }
-                    AUTO_ZOOMING = true;
-                    std::thread::spawn(move || {
-                        for _ in 0..25 {
-                            sleep(Duration::from_millis(1));
-                            let first_contact = touch_infos.first_mut().unwrap();
-                            if zoom_out {
-                                first_contact.pointerInfo.ptPixelLocation.x += 3;
-                                first_contact.pointerInfo.ptPixelLocation.y += 3;
-                            } else {
-                                first_contact.pointerInfo.ptPixelLocation.x -= 3;
-                                first_contact.pointerInfo.ptPixelLocation.y -= 3;
-                            }
-                            let second_contact = touch_infos.last_mut().unwrap();
-                            if zoom_out {
-                                second_contact.pointerInfo.ptPixelLocation.x -= 3;
-                                second_contact.pointerInfo.ptPixelLocation.y -= 3;
-                            } else {
-                                second_contact.pointerInfo.ptPixelLocation.x += 3;
-                                second_contact.pointerInfo.ptPixelLocation.y += 3;
-                            }
-                            if let Err(error) = InjectTouchInput(&touch_infos) {
-                                println!("Error while performing auto zoom: {error}");
-                                break;
-                            }
-                        }
-                        sleep(Duration::from_millis(5));
-                        for touch_info in touch_infos.iter_mut() {
-                            touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
-                        }
-                        log_error!(InjectTouchInput(&touch_infos));
-                        AUTO_ZOOMING = false
-                    });
+                    *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
+                    AUTO_ZOOMING.replace(zoom_out);
+                    SetEvent(HANDLE(AUTO_ZOOMING_EVENT.as_ref().unwrap().0)).unwrap();
                     return LRESULT(1);
                 } else {
                     println!("{result:?}");

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-windows = { version = "0.57.0", features = [
+windows = { version = "0.58.0", features = [
     "Win32_System_Threading",
     "Win32_System_LibraryLoader",
     "Win32_Security",
@@ -14,6 +14,9 @@ windows = { version = "0.57.0", features = [
     "Win32_UI_HiDpi",
     "Win32_Graphics_Gdi",
 ] }
+
+[profile.dev]
+panic = "abort"
 
 [profile.release]
 panic = "abort"
