@@ -1,6 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{sync::Mutex, thread::sleep, time::Duration};
+use std::{
+    sync::{LazyLock, Mutex},
+    thread::sleep,
+    time::Duration,
+};
 use windows::{
     core::{w, Owned},
     Win32::{
@@ -44,9 +48,13 @@ macro_rules! log_error {
     };
 }
 
+fn create_windows_event() -> Owned<HANDLE> {
+    unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) }
+}
+
 static mut CURRENT_TOUCH_INFOS: Mutex<Vec<POINTER_TOUCH_INFO>> = Mutex::new(Vec::new());
-static mut KEEP_ALIVE_EVENT: Option<Owned<HANDLE>> = None;
-static mut AUTO_ZOOMING_EVENT: Option<Owned<HANDLE>> = None;
+static mut KEEP_ALIVE_EVENT: LazyLock<Owned<HANDLE>> = LazyLock::new(create_windows_event);
+static mut AUTO_ZOOMING_EVENT: LazyLock<Owned<HANDLE>> = LazyLock::new(create_windows_event);
 static mut AUTO_ZOOMING: Option<bool> = None;
 
 fn main() {
@@ -64,14 +72,9 @@ fn main() {
     unsafe { InitializeTouchInjection(2, TOUCH_FEEDBACK_DEFAULT).unwrap() }
 
     // Keep touch contacts alive
-    unsafe {
-        KEEP_ALIVE_EVENT.replace(Owned::new(CreateEventW(None, false, false, None).unwrap()))
-    };
     std::thread::spawn(move || loop {
-        unsafe { WaitForSingleObject(*KEEP_ALIVE_EVENT.as_deref().unwrap(), INFINITE) };
-        while unsafe { WaitForSingleObject(*KEEP_ALIVE_EVENT.as_deref().unwrap(), 100) }
-            == WAIT_TIMEOUT
-        {
+        unsafe { WaitForSingleObject(**KEEP_ALIVE_EVENT, INFINITE) };
+        while unsafe { WaitForSingleObject(**KEEP_ALIVE_EVENT, 100) } == WAIT_TIMEOUT {
             let touch_infos = unsafe { CURRENT_TOUCH_INFOS.lock().unwrap() };
             if touch_infos.is_empty() {
                 break;
@@ -86,11 +89,8 @@ fn main() {
     });
 
     // Perform auto zooming on event
-    unsafe {
-        AUTO_ZOOMING_EVENT.replace(Owned::new(CreateEventW(None, false, false, None).unwrap()))
-    };
     std::thread::spawn(move || loop {
-        unsafe { WaitForSingleObject(*AUTO_ZOOMING_EVENT.as_deref().unwrap(), INFINITE) };
+        unsafe { WaitForSingleObject(**AUTO_ZOOMING_EVENT, INFINITE) };
         let Some(zoom_out) = (unsafe { AUTO_ZOOMING }) else {
             continue;
         };
@@ -165,7 +165,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                 );
                 let mut touch_infos = vec![touch_info];
                 if is_key_down(VK_CONTROL) {
-                    let mut second_contact = touch_info.clone();
+                    let mut second_contact = touch_info;
                     second_contact.pointerInfo.pointerId = 1;
                     touch_infos.push(second_contact);
                 };
@@ -176,7 +176,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                             POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
                     }
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
-                    SetEvent(*KEEP_ALIVE_EVENT.as_deref().unwrap()).unwrap();
+                    SetEvent(**KEEP_ALIVE_EVENT).unwrap();
                 } else {
                     println!("Error while sending touch down: {result:?}");
                 }
@@ -199,7 +199,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                 }
                 log_error!(InjectTouchInput(&touch_infos), "sending touch end");
                 touch_infos.clear();
-                SetEvent(*KEEP_ALIVE_EVENT.as_deref().unwrap()).unwrap();
+                SetEvent(**KEEP_ALIVE_EVENT).unwrap();
                 return LRESULT(1);
             }
         }
@@ -210,7 +210,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                     &info.pt,
                     POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
                 );
-                let mut second_contact = first_contact.clone();
+                let mut second_contact = first_contact;
                 second_contact.pointerInfo.pointerId = 1;
                 if zoom_out {
                     first_contact.pointerInfo.ptPixelLocation.x -= 100;
@@ -227,7 +227,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                     }
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = touch_infos;
                     AUTO_ZOOMING.replace(zoom_out);
-                    SetEvent(*AUTO_ZOOMING_EVENT.as_deref().unwrap()).unwrap();
+                    SetEvent(**AUTO_ZOOMING_EVENT).unwrap();
                     return LRESULT(1);
                 } else {
                     println!("Error while sending touch down to start auto zooming: {result:?}");
