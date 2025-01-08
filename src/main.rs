@@ -9,7 +9,7 @@ use windows::{
     core::{w, Owned},
     Win32::{
         Foundation::{
-            GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, LRESULT, POINT, WAIT_TIMEOUT,
+            GetLastError, ERROR_ALREADY_EXISTS, HANDLE, LPARAM, LRESULT, POINT, WAIT_TIMEOUT,
             WPARAM,
         },
         System::{
@@ -27,7 +27,7 @@ use windows::{
                 },
             },
             WindowsAndMessaging::{
-                CallNextHookEx, GetMessageW, SetWindowsHookExW, HHOOK, LLMHF_INJECTED, MSG,
+                CallNextHookEx, GetMessageW, SetWindowsHookExW, LLMHF_INJECTED, MSG,
                 MSLLHOOKSTRUCT, PT_TOUCH, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
                 WM_MOUSEWHEEL,
             },
@@ -67,7 +67,15 @@ fn main() {
 
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).unwrap() };
     let hmod = unsafe { GetModuleHandleW(w!("kernel32.dll")).unwrap() };
-    unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), hmod, 0).unwrap() };
+    unsafe {
+        SetWindowsHookExW(
+            WH_MOUSE_LL,
+            Some(low_level_mouse_proc),
+            Some(hmod.into()),
+            0,
+        )
+        .unwrap()
+    };
 
     unsafe { InitializeTouchInjection(2, TOUCH_FEEDBACK_DEFAULT).unwrap() }
 
@@ -136,7 +144,7 @@ fn main() {
     });
 
     let message: *mut MSG = std::ptr::null_mut();
-    while unsafe { GetMessageW(message, HWND::default(), 0, 0).into() } {}
+    while unsafe { GetMessageW(message, None, 0, 0).into() } {}
 }
 
 unsafe extern "system" fn low_level_mouse_proc(
@@ -145,7 +153,7 @@ unsafe extern "system" fn low_level_mouse_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if code < 0 || AUTO_ZOOMING.is_some() {
-        return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+        return CallNextHookEx(None, code, wparam, lparam);
     }
 
     let info = *(lparam.0 as *const MSLLHOOKSTRUCT);
@@ -153,7 +161,7 @@ unsafe extern "system" fn low_level_mouse_proc(
     // dbg!(&info);
     if info.flags & LLMHF_INJECTED != 0 {
         println!("injected, info.flags: {}", info.flags);
-        return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+        return CallNextHookEx(None, code, wparam, lparam);
     }
     match wparam.0 as u32 {
         WM_LBUTTONDOWN => {
@@ -237,7 +245,7 @@ unsafe extern "system" fn low_level_mouse_proc(
         _ => {}
     };
 
-    CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    CallNextHookEx(None, code, wparam, lparam)
 }
 
 fn create_touch_info(point: &POINT, flags: POINTER_FLAGS) -> POINTER_TOUCH_INFO {
