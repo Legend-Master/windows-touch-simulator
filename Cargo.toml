@@ -1,7 +1,10 @@
 [package]
 name = "windows-touch-simulator"
-version = "0.1.0"
+version = "0.0.3"
 edition = "2021"
+
+[features]
+system-tray = ["tray-icon", "tauri-winres"]
 
 [dependencies]
 windows = { version = "0.59", features = [
@@ -14,6 +17,10 @@ windows = { version = "0.59", features = [
     "Win32_UI_HiDpi",
     "Win32_Graphics_Gdi",
 ] }
+tray-icon = { version = "0.19.2", optional = true }
+
+[build-dependencies]
+tauri-winres = { version = "0.3", optional = true }
 
 [profile.dev]
 panic = "abort"

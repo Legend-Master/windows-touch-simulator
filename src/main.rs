@@ -28,9 +28,9 @@ use windows::{
                 },
             },
             WindowsAndMessaging::{
-                CallNextHookEx, GetMessageW, SetWindowsHookExW, LLMHF_INJECTED, MSG,
-                MSLLHOOKSTRUCT, PT_TOUCH, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-                WM_MOUSEWHEEL,
+                CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+                LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PT_TOUCH, WH_MOUSE_LL, WM_LBUTTONDOWN,
+                WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
             },
         },
     },
@@ -152,8 +152,16 @@ fn main() {
         AUTO_ZOOMING.lock().unwrap().take();
     });
 
+    #[cfg(feature = "system-tray")]
+    let _system_tray = create_system_tray();
+
     let mut message = MSG::default();
-    while unsafe { GetMessageW(&mut message, None, 0, 0).as_bool() } {}
+    while unsafe { GetMessageW(&mut message, None, 0, 0).as_bool() } {
+        unsafe {
+            let _ = TranslateMessage(&message);
+        };
+        unsafe { DispatchMessageW(&message) };
+    }
 }
 
 unsafe extern "system" fn low_level_mouse_proc(
@@ -265,10 +273,7 @@ unsafe extern "system" fn low_level_mouse_proc(
 }
 
 fn map_pointer_touch_info(contacts: Vec<POINTER_TOUCH_INFO>) -> Vec<PointerTouchInfo> {
-    contacts
-        .into_iter()
-        .map(|contact| PointerTouchInfo(contact))
-        .collect()
+    contacts.into_iter().map(PointerTouchInfo).collect()
 }
 
 unsafe fn inject_touch_input(contacts: &[PointerTouchInfo]) -> windows::core::Result<()> {
@@ -344,4 +349,23 @@ impl DerefMut for PointerTouchInfo {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
+}
+
+/// Creates a system tray for indicating the app state and a way to exit it
+///
+/// Panics on fail
+#[cfg(feature = "system-tray")]
+#[must_use = "Not using it will drop the TrayIcon and it will get removed immediately making it useless"]
+fn create_system_tray() -> tray_icon::TrayIcon {
+    use windows::Win32::UI::WindowsAndMessaging::IDI_APPLICATION;
+
+    let menu = tray_icon::menu::Menu::new();
+    menu.append(&tray_icon::menu::PredefinedMenuItem::quit(None))
+        .unwrap();
+    tray_icon::TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_tooltip("Windows Touch Simulator")
+        .with_icon(tray_icon::Icon::from_resource(IDI_APPLICATION.0 as _, None).unwrap())
+        .build()
+        .unwrap()
 }

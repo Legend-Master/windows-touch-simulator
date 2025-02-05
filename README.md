@@ -17,6 +17,10 @@ Notes:
 - Requires Windows 10 +
 - If you want it to work on elevated apps like task manager, run it as admin
 
+## Credits
+
+- The system tray icon is made from the touch and cursor icon from [Material Design Icons](https://github.com/Templarian/MaterialDesign)
+
 ## TODO
 
 - [ ] Understand how to use touchpad zoom instead of touch zoom
