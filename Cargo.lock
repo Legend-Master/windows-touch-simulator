@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "windows-touch-simulator"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "tauri-winres",
  "tray-icon",
