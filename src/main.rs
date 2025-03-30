@@ -7,33 +7,34 @@ use std::{
     time::Duration,
 };
 use windows::{
-    core::{w, Owned},
     Win32::{
         Foundation::{
-            GetLastError, ERROR_ALREADY_EXISTS, HANDLE, LPARAM, LRESULT, POINT, WAIT_TIMEOUT,
+            ERROR_ALREADY_EXISTS, GetLastError, HANDLE, LPARAM, LRESULT, POINT, WAIT_TIMEOUT,
             WPARAM,
         },
         System::{
             LibraryLoader::GetModuleHandleW,
-            Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE},
+            Threading::{CreateEventW, CreateMutexW, INFINITE, SetEvent, WaitForSingleObject},
         },
         UI::{
-            HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
+            HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext},
             Input::{
                 KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_RSHIFT},
                 Pointer::{
-                    InitializeTouchInjection, InjectTouchInput, POINTER_FLAGS, POINTER_FLAG_DOWN,
+                    InitializeTouchInjection, InjectTouchInput, POINTER_FLAG_DOWN,
                     POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE, POINTER_FLAG_UP,
-                    POINTER_FLAG_UPDATE, POINTER_INFO, POINTER_TOUCH_INFO, TOUCH_FEEDBACK_DEFAULT,
+                    POINTER_FLAG_UPDATE, POINTER_FLAGS, POINTER_INFO, POINTER_TOUCH_INFO,
+                    TOUCH_FEEDBACK_DEFAULT,
                 },
             },
             WindowsAndMessaging::{
-                CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-                LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PT_TOUCH, WH_MOUSE_LL, WM_LBUTTONDOWN,
+                CallNextHookEx, DispatchMessageW, GetMessageW, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
+                PT_TOUCH, SetWindowsHookExW, TranslateMessage, WH_MOUSE_LL, WM_LBUTTONDOWN,
                 WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
             },
         },
     },
+    core::{Owned, w},
 };
 
 macro_rules! log_error {
@@ -83,73 +84,77 @@ fn main() {
     unsafe { InitializeTouchInjection(2, TOUCH_FEEDBACK_DEFAULT).unwrap() }
 
     // Keep touch contacts alive
-    std::thread::spawn(move || loop {
-        unsafe { WaitForSingleObject(**KEEP_ALIVE_EVENT, INFINITE) };
-        while unsafe { WaitForSingleObject(**KEEP_ALIVE_EVENT, 100) } == WAIT_TIMEOUT {
-            let touch_infos = CURRENT_TOUCH_INFOS.lock().unwrap();
-            if touch_infos.is_empty() {
-                break;
+    std::thread::spawn(move || {
+        loop {
+            unsafe { WaitForSingleObject(**KEEP_ALIVE_EVENT, INFINITE) };
+            while unsafe { WaitForSingleObject(**KEEP_ALIVE_EVENT, 100) } == WAIT_TIMEOUT {
+                let touch_infos = CURRENT_TOUCH_INFOS.lock().unwrap();
+                if touch_infos.is_empty() {
+                    break;
+                }
+                unsafe {
+                    log_error!(
+                        inject_touch_input(&touch_infos),
+                        "sending touch move to keep the touch alive"
+                    )
+                };
             }
-            unsafe {
-                log_error!(
-                    inject_touch_input(&touch_infos),
-                    "sending touch move to keep the touch alive"
-                )
-            };
         }
     });
 
     // Perform auto zooming on event
-    std::thread::spawn(move || loop {
-        unsafe { WaitForSingleObject(**AUTO_ZOOMING_EVENT, INFINITE) };
-        let Some(zoom_out) = *AUTO_ZOOMING.lock().unwrap() else {
-            continue;
-        };
-        let mut touch_infos = CURRENT_TOUCH_INFOS.lock().unwrap();
-        if touch_infos.is_empty() {
-            continue;
-        }
-        for _ in 0..25 {
-            sleep(Duration::from_millis(1));
-            let first_contact = touch_infos.first_mut().unwrap();
-            match zoom_out {
-                AutoZooming::ZoomIn => {
-                    first_contact.pointerInfo.ptPixelLocation.x -= 3;
-                    first_contact.pointerInfo.ptPixelLocation.y -= 3;
+    std::thread::spawn(move || {
+        loop {
+            unsafe { WaitForSingleObject(**AUTO_ZOOMING_EVENT, INFINITE) };
+            let Some(zoom_out) = *AUTO_ZOOMING.lock().unwrap() else {
+                continue;
+            };
+            let mut touch_infos = CURRENT_TOUCH_INFOS.lock().unwrap();
+            if touch_infos.is_empty() {
+                continue;
+            }
+            for _ in 0..25 {
+                sleep(Duration::from_millis(1));
+                let first_contact = touch_infos.first_mut().unwrap();
+                match zoom_out {
+                    AutoZooming::ZoomIn => {
+                        first_contact.pointerInfo.ptPixelLocation.x -= 3;
+                        first_contact.pointerInfo.ptPixelLocation.y -= 3;
+                    }
+                    AutoZooming::ZoomOut => {
+                        first_contact.pointerInfo.ptPixelLocation.x += 3;
+                        first_contact.pointerInfo.ptPixelLocation.y += 3;
+                    }
                 }
-                AutoZooming::ZoomOut => {
-                    first_contact.pointerInfo.ptPixelLocation.x += 3;
-                    first_contact.pointerInfo.ptPixelLocation.y += 3;
+                let second_contact = touch_infos.last_mut().unwrap();
+                match zoom_out {
+                    AutoZooming::ZoomIn => {
+                        second_contact.pointerInfo.ptPixelLocation.x += 3;
+                        second_contact.pointerInfo.ptPixelLocation.y += 3;
+                    }
+                    AutoZooming::ZoomOut => {
+                        second_contact.pointerInfo.ptPixelLocation.x -= 3;
+                        second_contact.pointerInfo.ptPixelLocation.y -= 3;
+                    }
+                }
+                if let Err(error) = unsafe { inject_touch_input(&touch_infos) } {
+                    println!("Error while performing auto zoom: {error}");
+                    break;
                 }
             }
-            let second_contact = touch_infos.last_mut().unwrap();
-            match zoom_out {
-                AutoZooming::ZoomIn => {
-                    second_contact.pointerInfo.ptPixelLocation.x += 3;
-                    second_contact.pointerInfo.ptPixelLocation.y += 3;
-                }
-                AutoZooming::ZoomOut => {
-                    second_contact.pointerInfo.ptPixelLocation.x -= 3;
-                    second_contact.pointerInfo.ptPixelLocation.y -= 3;
-                }
+            sleep(Duration::from_millis(5));
+            for touch_info in touch_infos.iter_mut() {
+                touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
             }
-            if let Err(error) = unsafe { inject_touch_input(&touch_infos) } {
-                println!("Error while performing auto zoom: {error}");
-                break;
-            }
+            unsafe {
+                log_error!(
+                    inject_touch_input(&touch_infos),
+                    "sending touch end in auto zooming"
+                )
+            };
+            touch_infos.clear();
+            AUTO_ZOOMING.lock().unwrap().take();
         }
-        sleep(Duration::from_millis(5));
-        for touch_info in touch_infos.iter_mut() {
-            touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
-        }
-        unsafe {
-            log_error!(
-                inject_touch_input(&touch_infos),
-                "sending touch end in auto zooming"
-            )
-        };
-        touch_infos.clear();
-        AUTO_ZOOMING.lock().unwrap().take();
     });
 
     #[cfg(feature = "system-tray")]
@@ -170,15 +175,15 @@ unsafe extern "system" fn low_level_mouse_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if code < 0 || AUTO_ZOOMING.lock().unwrap().is_some() {
-        return CallNextHookEx(None, code, wparam, lparam);
+        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
 
-    let info = *(lparam.0 as *const MSLLHOOKSTRUCT);
+    let info = unsafe { *(lparam.0 as *const MSLLHOOKSTRUCT) };
     // dbg!(&wparam);
     // dbg!(&info);
     if info.flags & LLMHF_INJECTED != 0 {
         println!("injected, info.flags: {}", info.flags);
-        return CallNextHookEx(None, code, wparam, lparam);
+        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
     match wparam.0 as u32 {
         WM_LBUTTONDOWN => {
@@ -194,14 +199,14 @@ unsafe extern "system" fn low_level_mouse_proc(
                     second_contact.pointerInfo.pointerId = 1;
                     touch_infos.push(second_contact);
                 };
-                let result = InjectTouchInput(&touch_infos);
+                let result = unsafe { InjectTouchInput(&touch_infos) };
                 if result.is_ok() {
                     for touch_info in touch_infos.iter_mut() {
                         touch_info.pointerInfo.pointerFlags =
                             POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
                     }
                     *CURRENT_TOUCH_INFOS.lock().unwrap() = map_pointer_touch_info(touch_infos);
-                    SetEvent(**KEEP_ALIVE_EVENT).unwrap();
+                    unsafe { SetEvent(**KEEP_ALIVE_EVENT).unwrap() };
                 } else {
                     println!("Error while sending touch down: {result:?}");
                 }
@@ -212,7 +217,10 @@ unsafe extern "system" fn low_level_mouse_proc(
             let mut touch_infos = CURRENT_TOUCH_INFOS.lock().unwrap();
             if let Some(touch_info) = touch_infos.last_mut() {
                 touch_info.pointerInfo.ptPixelLocation = info.pt;
-                log_error!(inject_touch_input(&touch_infos), "sending touch move");
+                log_error!(
+                    unsafe { inject_touch_input(&touch_infos) },
+                    "sending touch move"
+                );
             }
         }
         WM_LBUTTONUP => {
@@ -222,9 +230,12 @@ unsafe extern "system" fn low_level_mouse_proc(
                 for touch_info in touch_infos.iter_mut() {
                     touch_info.pointerInfo.pointerFlags = POINTER_FLAG_UP;
                 }
-                log_error!(inject_touch_input(&touch_infos), "sending touch end");
+                log_error!(
+                    unsafe { inject_touch_input(&touch_infos) },
+                    "sending touch end"
+                );
                 touch_infos.clear();
-                SetEvent(**KEEP_ALIVE_EVENT).unwrap();
+                unsafe { SetEvent(**KEEP_ALIVE_EVENT).unwrap() };
                 return LRESULT(1);
             }
         }
@@ -244,7 +255,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                     second_contact.pointerInfo.ptPixelLocation.y += 100;
                 }
                 let mut touch_infos = vec![first_contact, second_contact];
-                let result = InjectTouchInput(&touch_infos);
+                let result = unsafe { InjectTouchInput(&touch_infos) };
                 match result {
                     Ok(_) => {
                         for touch_info in touch_infos.iter_mut() {
@@ -257,7 +268,7 @@ unsafe extern "system" fn low_level_mouse_proc(
                         } else {
                             AutoZooming::ZoomIn
                         });
-                        SetEvent(**AUTO_ZOOMING_EVENT).unwrap();
+                        unsafe { SetEvent(**AUTO_ZOOMING_EVENT).unwrap() };
                         return LRESULT(1);
                     }
                     Err(error) => {
@@ -269,7 +280,7 @@ unsafe extern "system" fn low_level_mouse_proc(
         _ => {}
     };
 
-    CallNextHookEx(None, code, wparam, lparam)
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
 fn map_pointer_touch_info(contacts: Vec<POINTER_TOUCH_INFO>) -> Vec<PointerTouchInfo> {
@@ -278,7 +289,7 @@ fn map_pointer_touch_info(contacts: Vec<POINTER_TOUCH_INFO>) -> Vec<PointerTouch
 
 unsafe fn inject_touch_input(contacts: &[PointerTouchInfo]) -> windows::core::Result<()> {
     let contacts: Vec<_> = contacts.iter().map(|contact| **contact).collect();
-    InjectTouchInput(&contacts)
+    unsafe { InjectTouchInput(&contacts) }
 }
 
 fn create_touch_info(point: &POINT, flags: POINTER_FLAGS) -> POINTER_TOUCH_INFO {
